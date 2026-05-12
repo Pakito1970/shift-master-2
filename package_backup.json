@@ -1,0 +1,12 @@
+﻿{
+  "name": "payload-pianificazione",
+  "version": "1.0.0",
+  "description": "Sistema di pianificazione turni PAYLOAD",
+  "main": "index.html",
+  "scripts": {
+    "start": "serve ."
+  },
+  "dependencies": {
+    "serve": "^14.2.3"
+  }
+}
