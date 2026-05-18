@@ -1,4 +1,4 @@
-﻿const CACHE_NAME = 'shiftmaster-v2-cache-v1';
+const CACHE_NAME = 'shiftmaster-v2-cache-v1';
 const ASSETS = [
   './',
   './index.html',
