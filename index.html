@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang='it'>
 <head>
     <meta charset='utf-8'>
@@ -171,16 +171,19 @@
             });
             document.getElementById('calBody').innerHTML = bodyHtml || "<tr><td colspan='32'>Nessun dato caricato</td></tr>";
             renderStats();
-            savePersistence();
-            syncToCloud();
+            persistData();
         }
 
-        async function syncToCloud() {
+        async function persistData() {
+            localStorage.setItem('p_staff', JSON.stringify(STAFF)); 
+            localStorage.setItem('p_shifts', JSON.stringify(state.shifts)); 
+            localStorage.setItem('p_history', JSON.stringify(state.history));
             try {
                 await _supabase.from('shifts').upsert({ id: 1, data: state.shifts });
                 await _supabase.from('profiles').upsert({ id: 1, data: STAFF });
                 await _supabase.from('requests').upsert({ id: 1, data: state.history });
-            } catch (e) { console.error("Sync error:", e); }
+                console.log("Sincronizzazione cloud completata.");
+            } catch (e) { console.error("Errore sincronizzazione cloud:", e); }
         }
 
         function renderStats() {
@@ -230,11 +233,37 @@
         }
 
         function importExcel(input) {
-            const reader = new FileReader(); reader.onload = (e) => {
-                const wb = XLSX.read(new Uint8Array(e.target.result), {type: 'array'});
-                const ws = wb.Sheets[wb.SheetNames[0]];
-                // Basic import logic...
-                renderCalendar();
+            const reader = new FileReader(); 
+            reader.onload = async (e) => {
+                try {
+                    const wb = XLSX.read(new Uint8Array(e.target.result), {type: 'array'});
+                    const ws = wb.Sheets["ANNO CORRENTE"] || wb.Sheets[wb.SheetNames[0]];
+                    for(let m=0; m<12; m++) {
+                        const rowOff = 4 + (m * 8);
+                        for(let s=0; s<STAFF.length; s++) {
+                            const staffName = STAFF[s];
+                            const row = rowOff + 3 + s;
+                            for(let d=1; d<=31; d++) {
+                                const cell = ws[XLSX.utils.encode_col(d) + row];
+                                if(cell && cell.v) {
+                                    const ds = `2026-${(m+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
+                                    const v = cell.v.toString().toUpperCase().trim();
+                                    if(!state.shifts[ds]) state.shifts[ds] = {};
+                                    if(!state.originalShifts[ds]) state.originalShifts[ds] = {};
+                                    state.shifts[ds][staffName] = v; 
+                                    state.originalShifts[ds][staffName] = v;
+                                }
+                            }
+                        }
+                    }
+                    alert("Importazione completata con successo! Sincronizzazione in corso...");
+                    await persistData();
+                    renderCalendar();
+                    toggleAdmin();
+                } catch(error) {
+                    console.error("Errore importazione:", error);
+                    alert("Errore durante l'importazione Excel.");
+                }
             };
             reader.readAsArrayBuffer(input.files[0]);
         }
@@ -245,7 +274,7 @@
         function renderAdminHistory() { const l = document.getElementById('historyList'); l.innerHTML = ''; state.history.forEach(h => l.innerHTML += `<div class='history-row'>${h.user}: ${h.date} ${h.from}->${h.to}</div>`); }
         function addUser() { const n = prompt("Nome:"); if(n) { STAFF.push(n.toUpperCase()); renderAdminUsers(); renderCalendar(); } }
         function removeUser(i) { STAFF.splice(i, 1); renderAdminUsers(); renderCalendar(); }
-        function savePersistence() { localStorage.setItem('p_staff', JSON.stringify(STAFF)); localStorage.setItem('p_shifts', JSON.stringify(state.shifts)); localStorage.setItem('p_history', JSON.stringify(state.history)); }
+
 
         async function init() {
             const mSelect = document.getElementById('monthSelect');

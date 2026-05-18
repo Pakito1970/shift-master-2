@@ -1,12 +1,11 @@
-const CACHE_NAME = 'shiftmaster-v2-cache-v1';
+﻿const CACHE_NAME = 'shiftmaster-v2-cache-v1';
 const ASSETS = [
   './',
   './index.html',
-  './style.css',
-  './auth.js',
-  './app.js',
+  './satellite_icon.png',
+  './app_icon_1777106981157.png',
+  './manifest.json',
   'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap',
-  'https://unpkg.com/lucide@latest',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'
 ];
 
