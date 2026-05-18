@@ -180,7 +180,7 @@
             localStorage.setItem('p_history', JSON.stringify(state.history));
             try {
                 await _supabase.from('shifts').upsert({ id: 1, data: state.shifts });
-                await _supabase.from('profiles').upsert({ id: 1, data: STAFF });
+                await _supabase.from('app_profiles').upsert({ id: 1, data: STAFF });
                 await _supabase.from('requests').upsert({ id: 1, data: state.history });
                 console.log("Sincronizzazione cloud completata.");
             } catch (e) { console.error("Errore sincronizzazione cloud:", e); }
@@ -292,7 +292,7 @@
 
             // Poi tenta Cloud
             try {
-                const { data: pData } = await _supabase.from('profiles').select('*').single();
+                const { data: pData } = await _supabase.from('app_profiles').select('*').single();
                 if(pData && pData.data) STAFF = pData.data;
                 const { data: sData } = await _supabase.from('shifts').select('*').single();
                 if(sData && sData.data) state.shifts = sData.data;
