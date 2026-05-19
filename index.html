@@ -147,23 +147,26 @@
 
         let STAFF = ["DI LAURO", "BASILICA", "CARANGIO", "DATTEO"];
         const OPTIONS = ["CFI", "CFI/REP", "REP", "MIX", "RM", "L.O.", "LIC", "—"];
-        const MONTHS = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
-        let state = { year: 2026, month: new Date().getMonth(), shifts: {}, originalShifts: {}, history: [], pendingRequests: [], emailConfig: { serviceId: '', templateId: '', publicKey: '', toEmails: '' } };
+        const MONTHS = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Octobre","Novembre","Dicembre"];
+        let state = { year: 2026, month: new Date().getMonth(), shifts: {}, originalShifts: {}, history: [], pendingRequests: [], emailConfig: { serviceId: '', templateId: '', publicKey: '', toEmails: '' }, userRoles: { "DI LAURO": "SUPERUSER", "BASILICA": "USER", "CARANGIO": "USER", "DATTEO": "USER" } };
         let currentUser = null;
         let isAdmin = false;
 
         document.getElementById('loginUserSelect').addEventListener('change', (e) => {
-            document.getElementById('loginPin').style.display = e.target.value === 'ADMIN' ? 'block' : 'none';
+            const val = e.target.value;
+            const isSuper = val === 'ADMIN' || (state.userRoles && state.userRoles[val] === 'SUPERUSER');
+            document.getElementById('loginPin').style.display = isSuper ? 'block' : 'none';
         });
 
         function login() {
             const user = document.getElementById('loginUserSelect').value;
             if(!user) return alert("Seleziona un utente");
-            if(user === 'ADMIN') {
+            const isSuper = user === 'ADMIN' || (state.userRoles && state.userRoles[user] === 'SUPERUSER');
+            if(isSuper) {
                 const pin = document.getElementById('loginPin').value;
                 if(pin !== '1234') return alert("PIN errato!");
                 isAdmin = true;
-                currentUser = "ADMIN";
+                currentUser = user;
                 document.getElementById('adminBtnMain').style.display = 'inline-block';
             } else {
                 isAdmin = false;
@@ -249,10 +252,11 @@
             localStorage.setItem('p_history', JSON.stringify(state.history));
             localStorage.setItem('p_pending', JSON.stringify(state.pendingRequests));
             localStorage.setItem('p_email', JSON.stringify(state.emailConfig));
+            localStorage.setItem('p_roles', JSON.stringify(state.userRoles));
             try {
                 await _supabase.from('shifts').upsert({ id: 1, data: state.shifts });
                 await _supabase.from('app_profiles').upsert({ id: 1, data: STAFF });
-                await _supabase.from('requests').upsert({ id: 1, data: { history: state.history, pending: state.pendingRequests, emailConfig: state.emailConfig } });
+                await _supabase.from('requests').upsert({ id: 1, data: { history: state.history, pending: state.pendingRequests, emailConfig: state.emailConfig, userRoles: state.userRoles } });
                 console.log("Sincronizzazione cloud completata.");
             } catch (e) { console.error("Errore sincronizzazione cloud:", e); }
         }
@@ -318,10 +322,38 @@
                 try {
                     const wb = XLSX.read(new Uint8Array(e.target.result), {type: 'array'});
                     const ws = wb.Sheets["ANNO CORRENTE"] || wb.Sheets[wb.SheetNames[0]];
+                    
+                    // Estrarre dinamicamente i nomi degli operatori dalle righe del file
+                    const importedStaff = [];
                     for(let m=0; m<12; m++) {
                         const rowOff = 4 + (m * 8);
-                        for(let s=0; s<STAFF.length; s++) {
-                            const staffName = STAFF[s];
+                        for(let s=0; s<10; s++) { // Controlla fino a 10 righe per blocco mese
+                            const row = rowOff + 3 + s;
+                            const nameCell = ws['A' + row];
+                            if(nameCell && nameCell.v) {
+                                const importedName = nameCell.v.toString().toUpperCase().trim();
+                                if(importedName && importedName !== "GIORNO" && importedName !== "SETT." && !importedStaff.includes(importedName)) {
+                                    importedStaff.push(importedName);
+                                }
+                            }
+                        }
+                    }
+
+                    // Aggiungere nuovi operatori se non presenti e impostare i ruoli
+                    importedStaff.forEach(name => {
+                        if (!STAFF.includes(name)) {
+                            STAFF.push(name);
+                        }
+                        if (!state.userRoles[name]) {
+                            state.userRoles[name] = (name === "DI LAURO") ? "SUPERUSER" : "USER";
+                        }
+                    });
+
+                    // Caricare i turni per ciascun operatore importato
+                    for(let m=0; m<12; m++) {
+                        const rowOff = 4 + (m * 8);
+                        for(let s=0; s<importedStaff.length; s++) {
+                            const staffName = importedStaff[s];
                             const row = rowOff + 3 + s;
                             for(let d=1; d<=31; d++) {
                                 const cell = ws[XLSX.utils.encode_col(d) + row];
@@ -360,7 +392,27 @@
             } 
         }
         function switchTab(t, e) { document.querySelectorAll('.admin-content').forEach(c => c.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); document.getElementById(`tab-${t}`).classList.add('active'); e.target.classList.add('active'); }
-        function renderAdminUsers() { const l = document.getElementById('staffList'); l.innerHTML = ''; STAFF.forEach((n, i) => l.innerHTML += `<div class='admin-list-item'>${n} <button onclick='removeUser(${i})'>🗑️</button></div>`); }
+        function renderAdminUsers() { 
+            const l = document.getElementById('staffList'); 
+            l.innerHTML = ''; 
+            STAFF.forEach((n, i) => {
+                const role = state.userRoles[n] || 'USER';
+                const roleBadge = role === 'SUPERUSER' ? '<span style="color:var(--p); font-weight:bold; font-size:12px; margin-left:10px;">(SuperUser)</span>' : '<span style="color:#94a3b8; font-size:12px; margin-left:10px;">(User)</span>';
+                l.innerHTML += `<div class='admin-list-item'>
+                    <div><strong>${n}</strong> ${roleBadge}</div>
+                    <div>
+                        <button onclick='toggleUserRole("${n}")' style="padding:6px 12px; font-size:12px; background:rgba(255,255,255,0.05); margin-right:5px; border-radius:8px; cursor:pointer;">Ruolo</button>
+                        <button onclick='removeUser(${i})'>🗑️</button>
+                    </div>
+                </div>`;
+            }); 
+        }
+        function toggleUserRole(name) {
+            if(!state.userRoles[name]) state.userRoles[name] = 'USER';
+            state.userRoles[name] = state.userRoles[name] === 'SUPERUSER' ? 'USER' : 'SUPERUSER';
+            persistData();
+            renderAdminUsers();
+        }
         function renderAdminHistory() { const l = document.getElementById('historyList'); l.innerHTML = ''; state.history.forEach(h => l.innerHTML += `<div class='history-row'>[${h.timestamp}] ${h.user}: ${h.date} | ${h.from} -> ${h.to} ${h.by ? '(Admin)' : '(Approvato)'}</div>`); }
         function renderAdminPending() {
             const l = document.getElementById('pendingRequestsList'); l.innerHTML = '';
@@ -397,8 +449,27 @@
             persistData();
             alert("Configurazione Email salvata!");
         }
-        function addUser() { const n = prompt("Nome:"); if(n) { STAFF.push(n.toUpperCase()); renderAdminUsers(); renderCalendar(); } }
-        function removeUser(i) { STAFF.splice(i, 1); renderAdminUsers(); renderCalendar(); }
+        function addUser() { 
+            const n = prompt("Nome:"); 
+            if(n) { 
+                const name = n.toUpperCase().trim();
+                if(!STAFF.includes(name)) {
+                    STAFF.push(name); 
+                    state.userRoles[name] = (name === "DI LAURO") ? "SUPERUSER" : "USER";
+                    persistData();
+                    renderAdminUsers(); 
+                    renderCalendar(); 
+                }
+            } 
+        }
+        function removeUser(i) { 
+            const name = STAFF[i];
+            STAFF.splice(i, 1); 
+            if(state.userRoles[name]) delete state.userRoles[name];
+            persistData();
+            renderAdminUsers(); 
+            renderCalendar(); 
+        }
 
         function generateAndSendReport(req) {
             if(!state.emailConfig.serviceId || !state.emailConfig.templateId || !state.emailConfig.publicKey || !state.emailConfig.toEmails) {
@@ -452,6 +523,7 @@
             state.history = JSON.parse(localStorage.getItem('p_history') || '[]');
             state.pendingRequests = JSON.parse(localStorage.getItem('p_pending') || '[]');
             state.emailConfig = JSON.parse(localStorage.getItem('p_email') || '{"serviceId":"","templateId":"","publicKey":"","toEmails":""}');
+            state.userRoles = JSON.parse(localStorage.getItem('p_roles') || '{"DI LAURO":"SUPERUSER","BASILICA":"USER","CARANGIO":"USER","DATTEO":"USER"}');
 
             populateLoginUsers();
 
@@ -471,6 +543,7 @@
                         state.history = rData.data.history || [];
                         state.pendingRequests = rData.data.pending || [];
                         state.emailConfig = rData.data.emailConfig || state.emailConfig;
+                        state.userRoles = rData.data.userRoles || state.userRoles;
                     }
                 }
             } catch(e) { console.warn("Cloud load skip", e); }
