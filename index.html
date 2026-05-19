@@ -10,6 +10,7 @@
     <script src='https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js'></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;800&display=swap" rel="stylesheet">
     <style>
         :root { 
@@ -64,11 +65,33 @@
         .admin-list-item { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid var(--border); }
         .history-row { font-size: 13px; color: #cbd5e1; padding: 10px; border-bottom: 1px solid var(--border); font-family: monospace; }
         
+        #loginOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 3000; display: flex; justify-content: center; align-items: center; }
+        .login-box { background: var(--glass); padding: 40px; border-radius: 20px; border: 1px solid var(--border); text-align: center; width: 90%; max-width: 400px; }
+        .login-box h2 { margin-bottom: 20px; font-weight: 500; }
+        .login-box select, .login-box input { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 12px; background: #1e293b; color: white; border: 1px solid var(--border); box-sizing: border-box; }
+        .login-box button { width: 100%; padding: 12px; background: var(--p); color: #0b1120; font-weight: 800; border: none; font-size: 16px; border-radius: 12px; cursor: pointer; transition: 0.2s; }
+        .login-box button:hover { opacity: 0.9; transform: translateY(-2px); }
+        .pending-request { position: absolute; bottom: 4px; right: 4px; width: 10px; height: 10px; background: var(--bronzo); border-radius: 50%; box-shadow: 0 0 5px var(--bronzo); }
+        .admin-btn-action { padding: 6px 12px; font-size: 12px; margin-left: 10px; }
+        .btn-approve { background: rgba(16, 185, 129, 0.2); color: var(--success); border-color: var(--success); }
+        .btn-reject { background: rgba(239, 68, 68, 0.2); color: var(--ambra); border-color: var(--ambra); }
+        .email-config-group { margin-bottom: 15px; text-align: left; }
+        .email-config-group label { display: block; margin-bottom: 5px; font-size: 13px; color: #94a3b8; }
+        .email-config-group input { width: 100%; padding: 10px; border-radius: 8px; background: #0f172a; border: 1px solid var(--border); color: white; box-sizing: border-box; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @media (max-width: 768px) { .header-controls { flex-direction: column; gap: 15px; text-align: center; } #adminOverlay { padding: 20px; } }
     </style>
 </head>
 <body>
+    <div id="loginOverlay">
+        <div class="login-box">
+            <h2>Accedi al <span>Turnario</span></h2>
+            <select id="loginUserSelect"><option value="">Seleziona il tuo nome...</option><option value="ADMIN">⚙️ Amministratore</option></select>
+            <input type="password" id="loginPin" placeholder="PIN Admin (es. 1234)" style="display:none;">
+            <button onclick="login()">Entra</button>
+        </div>
+    </div>
+
     <div class='header-controls'>
         <h1>Pianificazione <span>PAYLOAD</span> <img src="satellite_icon.png" alt="Satellite" style="height:38px; vertical-align: middle; margin-left: 10px; filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.4));"></h1>
         <div style='display:flex; gap:12px; align-items:center; flex-wrap: wrap; justify-content: center;'>
@@ -77,7 +100,7 @@
             <button onclick="moveMonth(1)" title="Mese Successivo">&rsaquo;</button>
             <select id='yearSelect' onchange='renderCalendar()'></select>
             <button onclick='generatePDF()'>Audit Log</button>
-            <button onclick='toggleAdmin()' class="btn-admin">⚙️ Gestione Admin</button>
+            <button id="adminBtnMain" onclick='toggleAdmin()' class="btn-admin" style="display:none;">⚙️ Gestione Admin</button>
         </div>
     </div>
     <div class='calendar-container'><table id='mainTable'><thead id='calHead'></thead><tbody id='calBody'></tbody></table></div>
@@ -91,13 +114,26 @@
         <div class="admin-tabs">
             <button class="tab-btn active" onclick="switchTab('users', event)">Gestione Utenti</button>
             <button class="tab-btn" onclick="switchTab('requests', event)">Richieste & Storico</button>
+            <button class="tab-btn" onclick="switchTab('email', event)">Impostazioni Email</button>
             <button class="tab-btn" onclick="switchTab('import', event)">Importazione Dati</button>
         </div>
         <div id="tab-users" class="admin-content active">
             <div class="admin-card"><h3>Elenco Personale</h3><div id="staffList"></div><button onclick="addUser()">+ Aggiungi Operatore</button></div>
         </div>
         <div id="tab-requests" class="admin-content">
+            <div class="admin-card"><h3>Richieste in Attesa</h3><div id="pendingRequestsList">Nessuna richiesta in attesa.</div></div>
             <div class="admin-card"><h3>Log Cronologico</h3><div id="historyList"></div></div>
+        </div>
+        <div id="tab-email" class="admin-content">
+            <div class="admin-card">
+                <h3>Configurazione EmailJS</h3>
+                <p style="font-size: 13px; color:#94a3b8; margin-bottom: 15px;">Inserisci le credenziali di EmailJS per l'invio automatico dei PDF approvati.</p>
+                <div class="email-config-group"><label>Service ID</label><input type="text" id="emailServiceId" placeholder="es. service_abc123"></div>
+                <div class="email-config-group"><label>Template ID</label><input type="text" id="emailTemplateId" placeholder="es. template_xyz789"></div>
+                <div class="email-config-group"><label>Public Key</label><input type="text" id="emailPublicKey" placeholder="es. abcDEFghi123"></div>
+                <div class="email-config-group"><label>Indirizzi Email (separati da virgola)</label><input type="text" id="emailToAddresses" placeholder="es. admin1@email.it, admin2@email.it"></div>
+                <button onclick="saveEmailConfig()" class="btn-admin" style="width: 100%; margin-top: 10px;">Salva Configurazione</button>
+            </div>
         </div>
         <div id="tab-import" class="admin-content">
             <div class="admin-card"><h3>Importazione Excel</h3><input type='file' id='excelFile' onchange='importExcel(this)'></div>
@@ -112,7 +148,31 @@
         let STAFF = ["DI LAURO", "BASILICA", "CARANGIO", "DATTEO"];
         const OPTIONS = ["CFI", "CFI/REP", "REP", "MIX", "RM", "L.O.", "LIC", "—"];
         const MONTHS = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
-        let state = { year: 2026, month: new Date().getMonth(), shifts: {}, originalShifts: {}, history: [] };
+        let state = { year: 2026, month: new Date().getMonth(), shifts: {}, originalShifts: {}, history: [], pendingRequests: [], emailConfig: { serviceId: '', templateId: '', publicKey: '', toEmails: '' } };
+        let currentUser = null;
+        let isAdmin = false;
+
+        document.getElementById('loginUserSelect').addEventListener('change', (e) => {
+            document.getElementById('loginPin').style.display = e.target.value === 'ADMIN' ? 'block' : 'none';
+        });
+
+        function login() {
+            const user = document.getElementById('loginUserSelect').value;
+            if(!user) return alert("Seleziona un utente");
+            if(user === 'ADMIN') {
+                const pin = document.getElementById('loginPin').value;
+                if(pin !== '1234') return alert("PIN errato!");
+                isAdmin = true;
+                currentUser = "ADMIN";
+                document.getElementById('adminBtnMain').style.display = 'inline-block';
+            } else {
+                isAdmin = false;
+                currentUser = user;
+                document.getElementById('adminBtnMain').style.display = 'none';
+            }
+            document.getElementById('loginOverlay').style.display = 'none';
+            renderCalendar();
+        }
 
         const getEaster = (y) => {
             const f = Math.floor, G = y % 19, C = f(y/100), H = (C - f(C/4) - f((8*C+13)/25) + 19*G + 15) % 30, I = H - f(H/28)*(1-f(29/(H+1))*f((21-G)/11)), J = (y + f(y/4) + I + 2 - C + f(C/4)) % 7, L = I - J, m = 3 + f((L+40)/44), d = L + 28 - 31*f(m/4);
@@ -163,9 +223,18 @@
                     const ds = `${state.year}-${(state.month+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
                     const val = (state.shifts[ds] && state.shifts[ds][name]) || '—';
                     const isMod = state.originalShifts[ds] && state.originalShifts[ds][name] && state.originalShifts[ds][name] !== val;
+                    
+                    const pendingReq = state.pendingRequests.find(r => r.user === name && r.date === ds);
+                    const cellVal = pendingReq ? pendingReq.to : val;
+                    const pendingIndicator = pendingReq ? `<div class="pending-request" title="In attesa di approvazione"></div>` : "";
+                    
                     let optHtml = `<option value=''>Scegli...</option>`;
                     OPTIONS.forEach(o => optHtml += `<option value='${o}'>${o}</option>`);
-                    bodyHtml += `<td class='service-cell ${isMod ? 'modified' : ''}'>${val}<select class='service-select' onchange='requestChange("${name}","${ds}", this.value)'>${optHtml}</select></td>`;
+                    
+                    const canEdit = isAdmin || currentUser === name;
+                    const selectHtml = canEdit ? `<select class='service-select' onchange='requestChange("${name}","${ds}", this.value, "${val}")'>${optHtml}</select>` : "";
+                    
+                    bodyHtml += `<td class='service-cell ${isMod ? 'modified' : ''} ${pendingReq ? 'modified' : ''}' style="${pendingReq ? 'border-color: var(--bronzo); color: var(--bronzo) !important;' : ''}">${cellVal}${pendingIndicator}${selectHtml}</td>`;
                 }
                 bodyHtml += "</tr>";
             });
@@ -178,10 +247,12 @@
             localStorage.setItem('p_staff', JSON.stringify(STAFF)); 
             localStorage.setItem('p_shifts', JSON.stringify(state.shifts)); 
             localStorage.setItem('p_history', JSON.stringify(state.history));
+            localStorage.setItem('p_pending', JSON.stringify(state.pendingRequests));
+            localStorage.setItem('p_email', JSON.stringify(state.emailConfig));
             try {
                 await _supabase.from('shifts').upsert({ id: 1, data: state.shifts });
                 await _supabase.from('app_profiles').upsert({ id: 1, data: STAFF });
-                await _supabase.from('requests').upsert({ id: 1, data: state.history });
+                await _supabase.from('requests').upsert({ id: 1, data: { history: state.history, pending: state.pendingRequests, emailConfig: state.emailConfig } });
                 console.log("Sincronizzazione cloud completata.");
             } catch (e) { console.error("Errore sincronizzazione cloud:", e); }
         }
@@ -212,7 +283,7 @@
             document.getElementById('statsBody').innerHTML = html + "</tbody></table>";
         }
 
-        function requestChange(u, d, v) {
+        function requestChange(u, d, v, currentVal) {
             if(!v) return;
             if (v === 'REP' || v === 'REPF') {
                 const monthStr = d.substring(0, 7);
@@ -221,9 +292,18 @@
                 if (isFestive(d)) fest++; else fer++;
                 if (fer > 6 || fest > 2) { alert(`Limite superato per ${u}`); renderCalendar(); return; }
             }
-            if(!state.shifts[d]) state.shifts[d] = {};
-            state.history.push({ user: u, date: d, from: state.shifts[d][u] || '—', to: v, timestamp: new Date().toLocaleString() });
-            state.shifts[d][u] = v; renderCalendar();
+            if(isAdmin) {
+                if(!state.shifts[d]) state.shifts[d] = {};
+                state.history.push({ user: u, date: d, from: currentVal || '—', to: v, timestamp: new Date().toLocaleString(), by: 'Admin' });
+                state.shifts[d][u] = v; 
+            } else {
+                const existingReqIndex = state.pendingRequests.findIndex(r => r.user === u && r.date === d);
+                const reqObj = { id: Date.now().toString() + Math.random().toString().slice(2,6), user: u, date: d, from: currentVal || '—', to: v, timestamp: new Date().toLocaleString() };
+                if(existingReqIndex >= 0) state.pendingRequests[existingReqIndex] = reqObj;
+                else state.pendingRequests.push(reqObj);
+                alert(`Richiesta di modifica per il ${d} inviata all'Amministratore.`);
+            }
+            renderCalendar();
         }
 
         function generatePDF() {
@@ -268,13 +348,96 @@
             reader.readAsArrayBuffer(input.files[0]);
         }
 
-        function toggleAdmin() { const o = document.getElementById('adminOverlay'); o.style.display = o.style.display === 'flex' ? 'none' : 'flex'; if(o.style.display==='flex') { renderAdminUsers(); renderAdminHistory(); } }
+        function toggleAdmin() { 
+            const o = document.getElementById('adminOverlay'); 
+            o.style.display = o.style.display === 'flex' ? 'none' : 'flex'; 
+            if(o.style.display==='flex') { 
+                renderAdminUsers(); renderAdminHistory(); renderAdminPending();
+                document.getElementById('emailServiceId').value = state.emailConfig.serviceId || '';
+                document.getElementById('emailTemplateId').value = state.emailConfig.templateId || '';
+                document.getElementById('emailPublicKey').value = state.emailConfig.publicKey || '';
+                document.getElementById('emailToAddresses').value = state.emailConfig.toEmails || '';
+            } 
+        }
         function switchTab(t, e) { document.querySelectorAll('.admin-content').forEach(c => c.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); document.getElementById(`tab-${t}`).classList.add('active'); e.target.classList.add('active'); }
         function renderAdminUsers() { const l = document.getElementById('staffList'); l.innerHTML = ''; STAFF.forEach((n, i) => l.innerHTML += `<div class='admin-list-item'>${n} <button onclick='removeUser(${i})'>🗑️</button></div>`); }
-        function renderAdminHistory() { const l = document.getElementById('historyList'); l.innerHTML = ''; state.history.forEach(h => l.innerHTML += `<div class='history-row'>${h.user}: ${h.date} ${h.from}->${h.to}</div>`); }
+        function renderAdminHistory() { const l = document.getElementById('historyList'); l.innerHTML = ''; state.history.forEach(h => l.innerHTML += `<div class='history-row'>[${h.timestamp}] ${h.user}: ${h.date} | ${h.from} -> ${h.to} ${h.by ? '(Admin)' : '(Approvato)'}</div>`); }
+        function renderAdminPending() {
+            const l = document.getElementById('pendingRequestsList'); l.innerHTML = '';
+            if(state.pendingRequests.length === 0) { l.innerHTML = '<div style="padding:15px; color:#94a3b8;">Nessuna richiesta in attesa.</div>'; return; }
+            state.pendingRequests.forEach(r => {
+                l.innerHTML += `<div class='admin-list-item' style="align-items: flex-start; flex-direction: column; gap: 10px;">
+                    <div style="width: 100%;"><strong>${r.user}</strong>: ${r.date} (${r.from} &rarr; <strong>${r.to}</strong>)<br><small style="color:#64748b;">${r.timestamp}</small></div>
+                    <div style="align-self: flex-end;"><button class='admin-btn-action btn-approve' onclick='approveReq("${r.id}")'>Approva</button><button class='admin-btn-action btn-reject' onclick='rejectReq("${r.id}")'>Rifiuta</button></div>
+                </div>`;
+            });
+        }
+        function approveReq(id) {
+            const reqIdx = state.pendingRequests.findIndex(r => r.id === id);
+            if(reqIdx === -1) return;
+            const req = state.pendingRequests[reqIdx];
+            if(!state.shifts[req.date]) state.shifts[req.date] = {};
+            state.shifts[req.date][req.user] = req.to;
+            state.history.push({ user: req.user, date: req.date, from: req.from, to: req.to, timestamp: new Date().toLocaleString() });
+            state.pendingRequests.splice(reqIdx, 1);
+            generateAndSendReport(req);
+            renderAdminPending(); renderCalendar();
+        }
+        function rejectReq(id) {
+            state.pendingRequests = state.pendingRequests.filter(r => r.id !== id);
+            renderAdminPending(); renderCalendar();
+        }
+        function saveEmailConfig() {
+            state.emailConfig = {
+                serviceId: document.getElementById('emailServiceId').value.trim(),
+                templateId: document.getElementById('emailTemplateId').value.trim(),
+                publicKey: document.getElementById('emailPublicKey').value.trim(),
+                toEmails: document.getElementById('emailToAddresses').value.trim()
+            };
+            persistData();
+            alert("Configurazione Email salvata!");
+        }
         function addUser() { const n = prompt("Nome:"); if(n) { STAFF.push(n.toUpperCase()); renderAdminUsers(); renderCalendar(); } }
         function removeUser(i) { STAFF.splice(i, 1); renderAdminUsers(); renderCalendar(); }
 
+        function generateAndSendReport(req) {
+            if(!state.emailConfig.serviceId || !state.emailConfig.templateId || !state.emailConfig.publicKey || !state.emailConfig.toEmails) {
+                console.warn("Configurazione EmailJS incompleta. PDF generato ma non inviato.");
+                return;
+            }
+            emailjs.init(state.emailConfig.publicKey);
+            
+            const { jsPDF } = window.jspdf; 
+            const doc = new jsPDF();
+            doc.setFont("helvetica", "bold"); doc.setFontSize(20);
+            doc.text("Report Modifica Turno", 20, 20);
+            doc.setFont("helvetica", "normal"); doc.setFontSize(12);
+            doc.text(`Data Approvazione: ${new Date().toLocaleString()}`, 20, 30);
+            doc.text(`Utente: ${req.user}`, 20, 40);
+            doc.text(`Data Turno Interessata: ${req.date}`, 20, 50);
+            doc.text(`Modifica: da ${req.from} a ${req.to}`, 20, 60);
+            doc.text("Stato: APPROVATO", 20, 70);
+            
+            const pdfBase64 = doc.output('datauristring');
+            const params = {
+                to_emails: state.emailConfig.toEmails,
+                user_name: req.user,
+                shift_date: req.date,
+                modification: `${req.from} -> ${req.to}`,
+                content: pdfBase64,
+                message: `L'utente ${req.user} ha una modifica approvata per il giorno ${req.date}. Tipo: ${req.from} -> ${req.to}`
+            };
+            
+            emailjs.send(state.emailConfig.serviceId, state.emailConfig.templateId, params)
+                .then(() => alert(`Report inviato con successo per ${req.user}`))
+                .catch(err => { console.error("Errore invio email:", err); alert("Errore durante l'invio della mail. Controlla le configurazioni EmailJS."); });
+        }
+
+        function populateLoginUsers() {
+            const select = document.getElementById('loginUserSelect');
+            select.innerHTML = '<option value="">Seleziona il tuo nome...</option><option value="ADMIN">⚙️ Amministratore</option>';
+            STAFF.forEach(u => select.innerHTML += `<option value="${u}">${u}</option>`);
+        }
 
         async function init() {
             const mSelect = document.getElementById('monthSelect');
@@ -287,18 +450,29 @@
             const sStaff = localStorage.getItem('p_staff'); if(sStaff) STAFF = JSON.parse(sStaff);
             state.shifts = JSON.parse(localStorage.getItem('p_shifts') || '{}');
             state.history = JSON.parse(localStorage.getItem('p_history') || '[]');
+            state.pendingRequests = JSON.parse(localStorage.getItem('p_pending') || '[]');
+            state.emailConfig = JSON.parse(localStorage.getItem('p_email') || '{"serviceId":"","templateId":"","publicKey":"","toEmails":""}');
 
+            populateLoginUsers();
+
+            // renderCalendar() verrà richiamato dopo il login
             renderCalendar();
 
             // Poi tenta Cloud
             try {
                 const { data: pData } = await _supabase.from('app_profiles').select('*').single();
-                if(pData && pData.data) STAFF = pData.data;
+                if(pData && pData.data) { STAFF = pData.data; populateLoginUsers(); }
                 const { data: sData } = await _supabase.from('shifts').select('*').single();
                 if(sData && sData.data) state.shifts = sData.data;
                 const { data: rData } = await _supabase.from('requests').select('*').single();
-                if(rData && rData.data) state.history = rData.data;
-                renderCalendar();
+                if(rData && rData.data) {
+                    if(Array.isArray(rData.data)) state.history = rData.data; // backward compatibility
+                    else {
+                        state.history = rData.data.history || [];
+                        state.pendingRequests = rData.data.pending || [];
+                        state.emailConfig = rData.data.emailConfig || state.emailConfig;
+                    }
+                }
             } catch(e) { console.warn("Cloud load skip", e); }
         }
         init();
