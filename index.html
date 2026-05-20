@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang='it'>
 <head>
     <meta charset='utf-8'>
@@ -43,7 +43,9 @@
         
         .staff-name { text-align: left; padding: 8px 10px; font-weight: 500; font-size: 16px; background: transparent !important; color: #f1f5f9; position: sticky; left: 0; z-index: 10; backdrop-filter: blur(10px); border-right: 1px solid var(--border); }
         .service-cell { background: rgba(255,255,255,0.03); font-size: 16px; font-weight: 500; cursor: pointer; position: relative; }
-        .service-select { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+        .service-select { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 2; }
+        .editable-cell { border: 1px dashed rgba(56, 189, 248, 0.3) !important; cursor: pointer; }
+        .editable-cell:hover { background: rgba(56, 189, 248, 0.1) !important; border-color: var(--p) !important; }
         .modified { border: 1px solid var(--p) !important; color: var(--p) !important; background: rgba(56, 189, 248, 0.05); }
         
         .stats-container { margin-top: 20px; background: var(--glass); border-radius: 12px; border: 1px solid var(--border); padding: 15px; max-width: 850px; }
@@ -237,7 +239,7 @@
                     const canEdit = isAdmin || currentUser === name;
                     const selectHtml = canEdit ? `<select class='service-select' onchange='requestChange("${name}","${ds}", this.value, "${val}")'>${optHtml}</select>` : "";
                     
-                    bodyHtml += `<td class='service-cell ${isMod ? 'modified' : ''} ${pendingReq ? 'modified' : ''}' style="${pendingReq ? 'border-color: var(--bronzo); color: var(--bronzo) !important;' : ''}">${cellVal}${pendingIndicator}${selectHtml}</td>`;
+                    bodyHtml += `<td class='service-cell ${canEdit ? 'editable-cell' : ''} ${isMod ? 'modified' : ''} ${pendingReq ? 'modified' : ''}' style="${pendingReq ? 'border-color: var(--bronzo); color: var(--bronzo) !important;' : ''}">${cellVal}${pendingIndicator}${selectHtml}</td>`;
                 }
                 bodyHtml += "</tr>";
             });
@@ -254,8 +256,10 @@
             localStorage.setItem('p_email', JSON.stringify(state.emailConfig));
             localStorage.setItem('p_roles', JSON.stringify(state.userRoles));
             try {
-                await _supabase.from('shifts').upsert({ id: 1, data: state.shifts });
-                await _supabase.from('app_profiles').upsert({ id: 1, data: STAFF });
+                if (isAdmin) {
+                    await _supabase.from('shifts').upsert({ id: 1, data: state.shifts });
+                    await _supabase.from('profiles').upsert({ id: 1, data: STAFF });
+                }
                 await _supabase.from('requests').upsert({ id: 1, data: { history: state.history, pending: state.pendingRequests, emailConfig: state.emailConfig, userRoles: state.userRoles } });
                 console.log("Sincronizzazione cloud completata.");
             } catch (e) { console.error("Errore sincronizzazione cloud:", e); }
@@ -287,7 +291,7 @@
             document.getElementById('statsBody').innerHTML = html + "</tbody></table>";
         }
 
-        function requestChange(u, d, v, currentVal) {
+        async function requestChange(u, d, v, currentVal) {
             if(!v) return;
             if (v === 'REP' || v === 'REPF') {
                 const monthStr = d.substring(0, 7);
@@ -297,14 +301,29 @@
                 if (fer > 6 || fest > 2) { alert(`Limite superato per ${u}`); renderCalendar(); return; }
             }
             if(isAdmin) {
+                try {
+                    const { data: sData } = await _supabase.from('shifts').select('*').single();
+                    if (sData && sData.data) state.shifts = sData.data;
+                } catch (e) { console.warn("Errore recupero turni:", e); }
+
                 if(!state.shifts[d]) state.shifts[d] = {};
                 state.history.push({ user: u, date: d, from: currentVal || '—', to: v, timestamp: new Date().toLocaleString(), by: 'Admin' });
                 state.shifts[d][u] = v; 
+                await persistData();
             } else {
+                try {
+                    const { data: rData } = await _supabase.from('requests').select('*').single();
+                    if (rData && rData.data) {
+                        state.pendingRequests = rData.data.pending || [];
+                    }
+                } catch (e) { console.warn("Errore recupero richieste:", e); }
+
                 const existingReqIndex = state.pendingRequests.findIndex(r => r.user === u && r.date === d);
                 const reqObj = { id: Date.now().toString() + Math.random().toString().slice(2,6), user: u, date: d, from: currentVal || '—', to: v, timestamp: new Date().toLocaleString() };
                 if(existingReqIndex >= 0) state.pendingRequests[existingReqIndex] = reqObj;
                 else state.pendingRequests.push(reqObj);
+                
+                await persistData();
                 alert(`Richiesta di modifica per il ${d} inviata all'Amministratore.`);
             }
             renderCalendar();
@@ -424,19 +443,43 @@
                 </div>`;
             });
         }
-        function approveReq(id) {
+        async function approveReq(id) {
+            try {
+                const { data: rData } = await _supabase.from('requests').select('*').single();
+                if (rData && rData.data) {
+                    state.pendingRequests = rData.data.pending || [];
+                    state.history = rData.data.history || [];
+                }
+            } catch (e) { console.warn("Errore recupero richieste:", e); }
+
             const reqIdx = state.pendingRequests.findIndex(r => r.id === id);
-            if(reqIdx === -1) return;
+            if(reqIdx === -1) return alert("Richiesta non trovata o già gestita.");
             const req = state.pendingRequests[reqIdx];
+            
+            try {
+                const { data: sData } = await _supabase.from('shifts').select('*').single();
+                if (sData && sData.data) state.shifts = sData.data;
+            } catch (e) { console.warn("Errore recupero turni:", e); }
+
             if(!state.shifts[req.date]) state.shifts[req.date] = {};
             state.shifts[req.date][req.user] = req.to;
             state.history.push({ user: req.user, date: req.date, from: req.from, to: req.to, timestamp: new Date().toLocaleString() });
             state.pendingRequests.splice(reqIdx, 1);
+            
+            await persistData();
             generateAndSendReport(req);
             renderAdminPending(); renderCalendar();
         }
-        function rejectReq(id) {
+        async function rejectReq(id) {
+            try {
+                const { data: rData } = await _supabase.from('requests').select('*').single();
+                if (rData && rData.data) {
+                    state.pendingRequests = rData.data.pending || [];
+                }
+            } catch (e) { console.warn("Errore recupero richieste:", e); }
+
             state.pendingRequests = state.pendingRequests.filter(r => r.id !== id);
+            await persistData();
             renderAdminPending(); renderCalendar();
         }
         function saveEmailConfig() {
@@ -532,7 +575,7 @@
 
             // Poi tenta Cloud
             try {
-                const { data: pData } = await _supabase.from('app_profiles').select('*').single();
+                const { data: pData } = await _supabase.from('profiles').select('*').single();
                 if(pData && pData.data) { STAFF = pData.data; populateLoginUsers(); }
                 const { data: sData } = await _supabase.from('shifts').select('*').single();
                 if(sData && sData.data) state.shifts = sData.data;
