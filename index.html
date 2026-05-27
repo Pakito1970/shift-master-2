@@ -103,6 +103,7 @@
             <select id='yearSelect' onchange='renderCalendar()'></select>
             <button onclick='generatePDF()'>Audit Log</button>
             <button id="adminBtnMain" onclick='toggleAdmin()' class="btn-admin" style="display:none;">⚙️ Gestione Admin</button>
+            <button id="logoutBtn" onclick="logout()" style="display:none; background: rgba(239, 68, 68, 0.1); border-color: var(--ambra); color: var(--ambra);">Esci</button>
         </div>
     </div>
     <div class='calendar-container'><table id='mainTable'><thead id='calHead'></thead><tbody id='calBody'></tbody></table></div>
@@ -111,7 +112,10 @@
     <div id="adminOverlay">
         <div class="admin-header">
             <h1 style="font-size: 32px;">Pannello <span>Amministratore</span></h1>
-            <button onclick="toggleAdmin()" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); padding: 10px 25px; border-radius: 12px; font-weight: 500; cursor: pointer; color: white;">Esci dalla Gestione</button>
+            <div style="display: flex; gap: 12px;">
+                <button onclick="toggleAdmin()" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); padding: 10px 25px; border-radius: 12px; font-weight: 500; cursor: pointer; color: white;">Chiudi Pannello</button>
+                <button onclick="logout()" style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--ambra); padding: 10px 25px; border-radius: 12px; font-weight: 500; cursor: pointer; color: var(--ambra);">Disconnetti</button>
+            </div>
         </div>
         <div class="admin-tabs">
             <button class="tab-btn active" onclick="switchTab('users', event)">Gestione Utenti</button>
@@ -175,8 +179,21 @@
                 currentUser = user;
                 document.getElementById('adminBtnMain').style.display = 'none';
             }
+            document.getElementById('logoutBtn').style.display = 'inline-block';
             document.getElementById('loginOverlay').style.display = 'none';
             renderCalendar();
+        }
+
+        function logout() {
+            isAdmin = false;
+            currentUser = null;
+            document.getElementById('adminBtnMain').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'none';
+            document.getElementById('adminOverlay').style.display = 'none';
+            document.getElementById('loginUserSelect').value = '';
+            document.getElementById('loginPin').value = '';
+            document.getElementById('loginPin').style.display = 'none';
+            document.getElementById('loginOverlay').style.display = 'flex';
         }
 
         const getEaster = (y) => {
@@ -339,6 +356,19 @@
             const reader = new FileReader(); 
             reader.onload = async (e) => {
                 try {
+                    try {
+                        const { data: pData } = await _supabase.from('profiles').select('*').single();
+                        if (pData && pData.data) {
+                            STAFF = pData.data;
+                            populateLoginUsers();
+                        }
+                        const { data: rData } = await _supabase.from('requests').select('*').single();
+                        if (rData && rData.data && rData.data.userRoles) {
+                            state.userRoles = rData.data.userRoles;
+                        }
+                    } catch (err) {
+                        console.warn("Errore pre-caricamento cloud prima dell'importazione:", err);
+                    }
                     const wb = XLSX.read(new Uint8Array(e.target.result), {type: 'array'});
                     const ws = wb.Sheets["ANNO CORRENTE"] || wb.Sheets[wb.SheetNames[0]];
                     
