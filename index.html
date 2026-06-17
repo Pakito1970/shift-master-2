@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang='it'>
 <head>
     <meta charset='utf-8'>
@@ -94,6 +94,14 @@
         </div>
     </div>
 
+    <div id="notificationOverlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 17, 32, 0.9); backdrop-filter: blur(15px); z-index: 4000; display: none; justify-content: center; align-items: center;">
+        <div class="login-box" style="border: 1px solid var(--p); max-width: 450px;">
+            <h2 id="notificationTitle" style="color: var(--p);">📢 Notifica Turni</h2>
+            <p id="notificationMessage" style="font-size: 16px; margin: 20px 0; text-align: left; line-height: 1.6; color: #f8fafc;"></p>
+            <button onclick="closeNotification()" style="background: var(--p); color: #0b1120; font-weight: 800; width: 100%;">Ho capito</button>
+        </div>
+    </div>
+
     <div class='header-controls'>
         <h1>Pianificazione <span>PAYLOAD</span> <img src="satellite_icon.png" alt="Satellite" style="height:38px; vertical-align: middle; margin-left: 10px; filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.4));"></h1>
         <div style='display:flex; gap:12px; align-items:center; flex-wrap: wrap; justify-content: center;'>
@@ -122,6 +130,7 @@
             <button class="tab-btn" onclick="switchTab('requests', event)">Richieste & Storico</button>
             <button class="tab-btn" onclick="switchTab('email', event)">Impostazioni Email</button>
             <button class="tab-btn" onclick="switchTab('import', event)">Importazione Dati</button>
+            <button class="tab-btn" onclick="switchTab('report', event)">Esportazione Report</button>
         </div>
         <div id="tab-users" class="admin-content active">
             <div class="admin-card"><h3>Elenco Personale</h3><div id="staffList"></div><button onclick="addUser()">+ Aggiungi Operatore</button></div>
@@ -144,6 +153,35 @@
         <div id="tab-import" class="admin-content">
             <div class="admin-card"><h3>Importazione Excel</h3><input type='file' id='excelFile' onchange='importExcel(this)'></div>
         </div>
+        <div id="tab-report" class="admin-content">
+            <div class="admin-card">
+                <h3>Invio Report Periodico</h3>
+                <p style="font-size: 13px; color:#94a3b8; margin-bottom: 15px;">Genera e invia via email un report completo dei turni di tutti gli operatori per l'intervallo selezionato.</p>
+                
+                <div class="email-config-group">
+                    <label>Intervallo Report</label>
+                    <select id="reportRangeType" onchange="toggleCustomReportDates()" style="width: 100%; box-sizing: border-box;">
+                        <option value="week">Settimana Corrente</option>
+                        <option value="month">Mese Corrente</option>
+                        <option value="quarter">Trimestre Corrente</option>
+                        <option value="custom">Intervallo Libero (Date Custom)</option>
+                    </select>
+                </div>
+                
+                <div id="customReportDates" style="display: none; gap: 15px; margin-bottom: 15px;">
+                    <div class="email-config-group" style="flex: 1;">
+                        <label>Data Inizio</label>
+                        <input type="date" id="startReportDate" style="width: 100%; padding: 10px; border-radius: 8px; background: #0f172a; border: 1px solid var(--border); color: white; box-sizing: border-box;">
+                    </div>
+                    <div class="email-config-group" style="flex: 1;">
+                        <label>Data Fine</label>
+                        <input type="date" id="endReportDate" style="width: 100%; padding: 10px; border-radius: 8px; background: #0f172a; border: 1px solid var(--border); color: white; box-sizing: border-box;">
+                    </div>
+                </div>
+                
+                <button id="sendReportBtn" onclick="sendRangeReport()" class="btn-admin" style="width: 100%; margin-top: 10px;">Invia Report via Email</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -151,10 +189,57 @@
         const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVlZ3BhbmRmZ2N4eWN3dnpmZmJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczMjcwMzEsImV4cCI6MjA5MjkwMzAzMX0.xKZbvynKJ1aE1P_t3UQGYiNIACzDk7cP-flhkVdeu-Q";
         const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+        async function fetchShifts() {
+            try {
+                const { data, error } = await _supabase.from('shifts').select('*').single();
+                if (error) console.warn("Errore recupero turni:", error);
+                else if (data && data.data) state.shifts = data.data;
+            } catch (e) { console.error("Errore imprevisto recupero turni:", e); }
+        }
+
+        async function fetchRequests() {
+            try {
+                const { data, error } = await _supabase.from('requests').select('*').single();
+                if (error) console.warn("Errore recupero richieste:", error);
+                else if (data && data.data) {
+                    if (Array.isArray(data.data)) {
+                        state.history = data.data;
+                    } else {
+                        state.history = data.data.history || [];
+                        state.pendingRequests = data.data.pending || [];
+                        state.emailConfig = data.data.emailConfig || state.emailConfig;
+                        state.userRoles = data.data.userRoles || state.userRoles;
+                        state.notifications = data.data.notifications || [];
+                    }
+                }
+            } catch (e) { console.error("Errore imprevisto recupero richieste:", e); }
+        }
+
+        async function fetchProfiles() {
+            try {
+                const { data, error } = await _supabase.from('profiles').select('*').single();
+                if (error) console.warn("Errore recupero profili:", error);
+                else if (data && data.data) {
+                    STAFF = data.data;
+                    populateLoginUsers();
+                }
+            } catch (e) { console.error("Errore imprevisto recupero profili:", e); }
+        }
+
         let STAFF = ["DI LAURO", "BASILICA", "CARANGIO", "DATTEO"];
         const OPTIONS = ["CFI", "CFI/REP", "REP", "MIX", "RM", "L.O.", "LIC", "—"];
-        const MONTHS = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Octobre","Novembre","Dicembre"];
-        let state = { year: 2026, month: new Date().getMonth(), shifts: {}, originalShifts: {}, history: [], pendingRequests: [], emailConfig: { serviceId: '', templateId: '', publicKey: '', toEmails: '' }, userRoles: { "DI LAURO": "SUPERUSER", "BASILICA": "USER", "CARANGIO": "USER", "DATTEO": "USER" } };
+        const MONTHS = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+        let state = { 
+            year: 2026, 
+            month: new Date().getMonth(), 
+            shifts: {}, 
+            originalShifts: {}, 
+            history: [], 
+            pendingRequests: [], 
+            emailConfig: { serviceId: '', templateId: '', publicKey: '', toEmails: '' }, 
+            userRoles: { "DI LAURO": "SUPERUSER", "BASILICA": "USER", "CARANGIO": "USER", "DATTEO": "USER" },
+            notifications: []
+        };
         let currentUser = null;
         let isAdmin = false;
 
@@ -182,6 +267,11 @@
             document.getElementById('logoutBtn').style.display = 'inline-block';
             document.getElementById('loginOverlay').style.display = 'none';
             renderCalendar();
+            
+            // Controlla notifiche all'accesso e avvia intervallo di polling a 30s
+            checkUserNotifications();
+            if (window.notifInterval) clearInterval(window.notifInterval);
+            window.notifInterval = setInterval(checkUserNotifications, 30000);
         }
 
         function logout() {
@@ -194,58 +284,62 @@
             document.getElementById('loginPin').value = '';
             document.getElementById('loginPin').style.display = 'none';
             document.getElementById('loginOverlay').style.display = 'flex';
+            if (window.notifInterval) {
+                clearInterval(window.notifInterval);
+                window.notifInterval = null;
+            }
         }
 
         const getEaster = (y) => {
             const f = Math.floor, G = y % 19, C = f(y/100), H = (C - f(C/4) - f((8*C+13)/25) + 19*G + 15) % 30, I = H - f(H/28)*(1-f(29/(H+1))*f((21-G)/11)), J = (y + f(y/4) + I + 2 - C + f(C/4)) % 7, L = I - J, m = 3 + f((L+40)/44), d = L + 28 - 31*f(m/4);
-            return { m: m - 1, d: d };
+            return new Date(y, m - 1, d);
         };
 
-        const isHoliday = (d, m, y) => {
-            const fixed = ["1-0", "6-0", "20-0", "25-3", "1-4", "2-5", "15-7", "4-9", "1-10", "8-11", "25-11", "26-11"];
-            if (fixed.includes(d + '-' + m)) return true;
-            const e = getEaster(y); if (d === e.d && m === e.m) return true;
-            const mon = new Date(y, e.m, e.d + 1); return (d === mon.getDate() && m === mon.getMonth());
-        };
+        function isFestive(ds) {
+            const date = new Date(ds); if (date.getDay() === 0) return true;
+            const y = date.getFullYear(), m = date.getMonth(), d = date.getDate();
+            const f = [`${y}-01-01`, `${y}-01-06`, `${y}-04-25`, `${y}-05-01`, `${y}-06-02`, `${y}-08-15`, `${y}-11-01`, `${y}-12-08`, `${y}-12-25`, `${y}-12-26`];
+            const easter = getEaster(y);
+            const easterMonday = new Date(easter); easterMonday.setDate(easter.getDate() + 1);
+            const p = (dt) => `${dt.getFullYear()}-${(dt.getMonth()+1).toString().padStart(2,'0')}-${dt.getDate().toString().padStart(2,'0')}`;
+            f.push(p(easterMonday));
+            return f.includes(ds);
+        }
 
-        const isFestive = (ds) => {
-            const [y, m, d] = ds.split('-').map(Number);
-            return isHoliday(d, m - 1, y) || (new Date(y, m - 1, d).getDay() === 0);
-        };
-
-        function moveMonth(delta) { 
-            let mSelect = document.getElementById("monthSelect");
-            let ySelect = document.getElementById("yearSelect");
-            let d = new Date(state.year, state.month + delta, 1); 
-            state.month = d.getMonth(); state.year = d.getFullYear();
-            mSelect.value = state.month; ySelect.value = state.year;
-            renderCalendar(); 
+        function moveMonth(dir) {
+            let m = state.month + dir;
+            if (m < 0) { state.month = 11; state.year--; }
+            else if (m > 11) { state.month = 0; state.year++; }
+            else { state.month = m; }
+            document.getElementById('monthSelect').value = state.month;
+            document.getElementById('yearSelect').value = state.year;
+            renderCalendar();
         }
 
         function renderCalendar() {
-            const mSelect = document.getElementById('monthSelect');
-            const ySelect = document.getElementById('yearSelect');
-            if (mSelect && mSelect.value) state.month = parseInt(mSelect.value);
-            if (ySelect && ySelect.value) state.year = parseInt(ySelect.value);
-            
-            const days = new Date(state.year, state.month + 1, 0).getDate();
-            let h1 = "<tr><th class='staff-name'>GIORNO</th>", h2 = "<tr><th class='staff-name'>SETT.</th>";
-            for(let d=1; d<=days; d++) {
-                const date = new Date(state.year, state.month, d);
+            const daysInMonth = new Date(state.year, state.month + 1, 0).getDate();
+            let headHtml = "<tr><th style='position: sticky; left: 0; z-index: 20; background: var(--bg);'>Operatore</th>";
+            for (let d = 1; d <= daysInMonth; d++) {
                 const ds = `${state.year}-${(state.month+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
-                const cls = isFestive(ds) ? "fest" : (date.getDay() === 6 ? "sat" : "");
-                h1 += `<th>${d}</th>`; h2 += `<th class='${cls}'>${["D","L","M","M","G","V","S"][date.getDay()]}</th>`;
+                const date = new Date(ds);
+                const isSat = date.getDay() === 6;
+                const isSun = date.getDay() === 0;
+                const isF = isFestive(ds);
+                const cls = isSun || isF ? "sun" : isSat ? "sat" : "";
+                const dayLabel = date.toLocaleDateString('it-IT', { weekday: 'short' }).substring(0,2).toUpperCase();
+                headHtml += `<th class='${cls}'>${d}<br><span style='font-size:10px;opacity:0.6'>${dayLabel}</span></th>`;
             }
-            document.getElementById('calHead').innerHTML = h1 + "</tr>" + h2 + "</tr>";
+            headHtml += "</tr>";
+            document.getElementById('calHead').innerHTML = headHtml;
 
             let bodyHtml = "";
             STAFF.forEach(name => {
                 bodyHtml += `<tr><td class='staff-name'>${name}</td>`;
-                for(let d=1; d<=days; d++) {
+                for (let d = 1; d <= daysInMonth; d++) {
                     const ds = `${state.year}-${(state.month+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
-                    const val = (state.shifts[ds] && state.shifts[ds][name]) || '—';
-                    const isMod = state.originalShifts[ds] && state.originalShifts[ds][name] && state.originalShifts[ds][name] !== val;
-                    
+                    const val = (state.shifts[ds] && state.shifts[ds][name]) || "—";
+                    const orig = (state.originalShifts[ds] && state.originalShifts[ds][name]) || "—";
+                    const isMod = val !== orig;
                     const pendingReq = state.pendingRequests.find(r => r.user === name && r.date === ds);
                     const cellVal = pendingReq ? pendingReq.to : val;
                     const pendingIndicator = pendingReq ? `<div class="pending-request" title="In attesa di approvazione"></div>` : "";
@@ -272,14 +366,19 @@
             localStorage.setItem('p_pending', JSON.stringify(state.pendingRequests));
             localStorage.setItem('p_email', JSON.stringify(state.emailConfig));
             localStorage.setItem('p_roles', JSON.stringify(state.userRoles));
+            localStorage.setItem('p_notifications', JSON.stringify(state.notifications || []));
             try {
                 if (isAdmin) {
-                    await _supabase.from('shifts').upsert({ id: 1, data: state.shifts });
-                    await _supabase.from('profiles').upsert({ id: 1, data: STAFF });
+                    const { error: errShifts } = await _supabase.from('shifts').upsert({ id: 1, data: state.shifts });
+                    if (errShifts) console.error("Errore sincronizzazione turni:", errShifts);
+
+                    const { error: errProfiles } = await _supabase.from('profiles').upsert({ id: 1, data: STAFF });
+                    if (errProfiles) console.error("Errore sincronizzazione profili:", errProfiles);
                 }
-                await _supabase.from('requests').upsert({ id: 1, data: { history: state.history, pending: state.pendingRequests, emailConfig: state.emailConfig, userRoles: state.userRoles } });
+                const { error: errRequests } = await _supabase.from('requests').upsert({ id: 1, data: { history: state.history, pending: state.pendingRequests, emailConfig: state.emailConfig, userRoles: state.userRoles, notifications: state.notifications || [] } });
+                if (errRequests) console.error("Errore sincronizzazione richieste:", errRequests);
                 console.log("Sincronizzazione cloud completata.");
-            } catch (e) { console.error("Errore sincronizzazione cloud:", e); }
+            } catch (e) { console.error("Errore imprevisto sincronizzazione cloud:", e); }
         }
 
         function renderStats() {
@@ -318,23 +417,13 @@
                 if (fer > 6 || fest > 2) { alert(`Limite superato per ${u}`); renderCalendar(); return; }
             }
             if(isAdmin) {
-                try {
-                    const { data: sData } = await _supabase.from('shifts').select('*').single();
-                    if (sData && sData.data) state.shifts = sData.data;
-                } catch (e) { console.warn("Errore recupero turni:", e); }
-
+                await fetchShifts();
                 if(!state.shifts[d]) state.shifts[d] = {};
                 state.history.push({ user: u, date: d, from: currentVal || '—', to: v, timestamp: new Date().toLocaleString(), by: 'Admin' });
                 state.shifts[d][u] = v; 
                 await persistData();
             } else {
-                try {
-                    const { data: rData } = await _supabase.from('requests').select('*').single();
-                    if (rData && rData.data) {
-                        state.pendingRequests = rData.data.pending || [];
-                    }
-                } catch (e) { console.warn("Errore recupero richieste:", e); }
-
+                await fetchRequests();
                 const existingReqIndex = state.pendingRequests.findIndex(r => r.user === u && r.date === d);
                 const reqObj = { id: Date.now().toString() + Math.random().toString().slice(2,6), user: u, date: d, from: currentVal || '—', to: v, timestamp: new Date().toLocaleString() };
                 if(existingReqIndex >= 0) state.pendingRequests[existingReqIndex] = reqObj;
@@ -356,27 +445,16 @@
             const reader = new FileReader(); 
             reader.onload = async (e) => {
                 try {
-                    try {
-                        const { data: pData } = await _supabase.from('profiles').select('*').single();
-                        if (pData && pData.data) {
-                            STAFF = pData.data;
-                            populateLoginUsers();
-                        }
-                        const { data: rData } = await _supabase.from('requests').select('*').single();
-                        if (rData && rData.data && rData.data.userRoles) {
-                            state.userRoles = rData.data.userRoles;
-                        }
-                    } catch (err) {
-                        console.warn("Errore pre-caricamento cloud prima dell'importazione:", err);
-                    }
+                    await fetchProfiles();
+                    await fetchRequests();
+                    
                     const wb = XLSX.read(new Uint8Array(e.target.result), {type: 'array'});
                     const ws = wb.Sheets["ANNO CORRENTE"] || wb.Sheets[wb.SheetNames[0]];
                     
-                    // Estrarre dinamicamente i nomi degli operatori dalle righe del file
                     const importedStaff = [];
                     for(let m=0; m<12; m++) {
                         const rowOff = 4 + (m * 8);
-                        for(let s=0; s<10; s++) { // Controlla fino a 10 righe per blocco mese
+                        for(let s=0; s<10; s++) {
                             const row = rowOff + 3 + s;
                             const nameCell = ws['A' + row];
                             if(nameCell && nameCell.v) {
@@ -388,17 +466,31 @@
                         }
                     }
 
-                    // Aggiungere nuovi operatori se non presenti e impostare i ruoli
-                    importedStaff.forEach(name => {
-                        if (!STAFF.includes(name)) {
-                            STAFF.push(name);
-                        }
-                        if (!state.userRoles[name]) {
-                            state.userRoles[name] = (name === "DI LAURO") ? "SUPERUSER" : "USER";
-                        }
+                    // Ordina lo staff secondo l'ordine richiesto: DI LAURO, BASILICA, CARANGIO, DATTEO, e poi gli altri in ordine alfabetico
+                    const ORDER_MAP = {
+                        "DI LAURO": 1,
+                        "BASILICA": 2,
+                        "CARANGIO": 3,
+                        "DATTEO": 4
+                    };
+                    importedStaff.sort((a, b) => {
+                        const orderA = ORDER_MAP[a] || 999;
+                        const orderB = ORDER_MAP[b] || 999;
+                        if (orderA !== orderB) return orderA - orderB;
+                        return a.localeCompare(b);
                     });
 
-                    // Caricare i turni per ciascun operatore importato
+                    STAFF = importedStaff;
+                    populateLoginUsers();
+
+                    // Aggiorna i ruoli per corrispondere solo al personale corrente
+                    const newRoles = {};
+                    STAFF.forEach(name => {
+                        newRoles[name] = state.userRoles[name] || ((name === "DI LAURO") ? "SUPERUSER" : "USER");
+                    });
+                    state.userRoles = newRoles;
+
+                    // Carica i turni
                     for(let m=0; m<12; m++) {
                         const rowOff = 4 + (m * 8);
                         for(let s=0; s<importedStaff.length; s++) {
@@ -440,7 +532,14 @@
                 document.getElementById('emailToAddresses').value = state.emailConfig.toEmails || '';
             } 
         }
-        function switchTab(t, e) { document.querySelectorAll('.admin-content').forEach(c => c.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); document.getElementById(`tab-${t}`).classList.add('active'); e.target.classList.add('active'); }
+        
+        function switchTab(t, e) { 
+            document.querySelectorAll('.admin-content').forEach(c => c.classList.remove('active')); 
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); 
+            document.getElementById(`tab-${t}`).classList.add('active'); 
+            e.target.classList.add('active'); 
+        }
+        
         function renderAdminUsers() { 
             const l = document.getElementById('staffList'); 
             l.innerHTML = ''; 
@@ -456,13 +555,16 @@
                 </div>`;
             }); 
         }
+        
         function toggleUserRole(name) {
             if(!state.userRoles[name]) state.userRoles[name] = 'USER';
             state.userRoles[name] = state.userRoles[name] === 'SUPERUSER' ? 'USER' : 'SUPERUSER';
             persistData();
             renderAdminUsers();
         }
+        
         function renderAdminHistory() { const l = document.getElementById('historyList'); l.innerHTML = ''; state.history.forEach(h => l.innerHTML += `<div class='history-row'>[${h.timestamp}] ${h.user}: ${h.date} | ${h.from} -> ${h.to} ${h.by ? '(Admin)' : '(Approvato)'}</div>`); }
+        
         function renderAdminPending() {
             const l = document.getElementById('pendingRequestsList'); l.innerHTML = '';
             if(state.pendingRequests.length === 0) { l.innerHTML = '<div style="padding:15px; color:#94a3b8;">Nessuna richiesta in attesa.</div>'; return; }
@@ -473,45 +575,71 @@
                 </div>`;
             });
         }
+        
         async function approveReq(id) {
-            try {
-                const { data: rData } = await _supabase.from('requests').select('*').single();
-                if (rData && rData.data) {
-                    state.pendingRequests = rData.data.pending || [];
-                    state.history = rData.data.history || [];
-                }
-            } catch (e) { console.warn("Errore recupero richieste:", e); }
+            await fetchRequests();
+            if (!state.notifications) state.notifications = [];
 
             const reqIdx = state.pendingRequests.findIndex(r => r.id === id);
             if(reqIdx === -1) return alert("Richiesta non trovata o già gestita.");
             const req = state.pendingRequests[reqIdx];
             
-            try {
-                const { data: sData } = await _supabase.from('shifts').select('*').single();
-                if (sData && sData.data) state.shifts = sData.data;
-            } catch (e) { console.warn("Errore recupero turni:", e); }
+            const reason = prompt(`Approva richiesta per ${req.user} del ${req.date} (${req.from} -> ${req.to}). Inserisci una motivazione (opzionale):`);
+            if (reason === null) return; // Azione annullata dall'Admin
+            
+            await fetchShifts();
 
             if(!state.shifts[req.date]) state.shifts[req.date] = {};
             state.shifts[req.date][req.user] = req.to;
             state.history.push({ user: req.user, date: req.date, from: req.from, to: req.to, timestamp: new Date().toLocaleString() });
+            
+            state.notifications.push({
+                id: Date.now().toString() + Math.random().toString().slice(2,6),
+                user: req.user,
+                date: req.date,
+                from: req.from,
+                to: req.to,
+                status: "APPROVATA",
+                reason: reason.trim(),
+                timestamp: new Date().toLocaleString(),
+                seenByUser: false
+            });
+
             state.pendingRequests.splice(reqIdx, 1);
             
             await persistData();
             generateAndSendReport(req);
             renderAdminPending(); renderCalendar();
         }
+        
         async function rejectReq(id) {
-            try {
-                const { data: rData } = await _supabase.from('requests').select('*').single();
-                if (rData && rData.data) {
-                    state.pendingRequests = rData.data.pending || [];
-                }
-            } catch (e) { console.warn("Errore recupero richieste:", e); }
+            await fetchRequests();
+            if (!state.notifications) state.notifications = [];
 
-            state.pendingRequests = state.pendingRequests.filter(r => r.id !== id);
+            const reqIdx = state.pendingRequests.findIndex(r => r.id === id);
+            if(reqIdx === -1) return alert("Richiesta non trovata.");
+            const req = state.pendingRequests[reqIdx];
+
+            const reason = prompt(`Rifiuta richiesta per ${req.user} del ${req.date} (${req.from} -> ${req.to}). Inserisci una motivazione (opzionale):`);
+            if (reason === null) return; // Azione annullata dall'Admin
+
+            state.notifications.push({
+                id: Date.now().toString() + Math.random().toString().slice(2,6),
+                user: req.user,
+                date: req.date,
+                from: req.from,
+                to: req.to,
+                status: "RIFIUTATA",
+                reason: reason.trim(),
+                timestamp: new Date().toLocaleString(),
+                seenByUser: false
+            });
+
+            state.pendingRequests.splice(reqIdx, 1);
             await persistData();
             renderAdminPending(); renderCalendar();
         }
+        
         function saveEmailConfig() {
             state.emailConfig = {
                 serviceId: document.getElementById('emailServiceId').value.trim(),
@@ -522,6 +650,7 @@
             persistData();
             alert("Configurazione Email salvata!");
         }
+        
         function addUser() { 
             const n = prompt("Nome:"); 
             if(n) { 
@@ -535,6 +664,7 @@
                 }
             } 
         }
+        
         function removeUser(i) { 
             const name = STAFF[i];
             STAFF.splice(i, 1); 
@@ -597,31 +727,213 @@
             state.pendingRequests = JSON.parse(localStorage.getItem('p_pending') || '[]');
             state.emailConfig = JSON.parse(localStorage.getItem('p_email') || '{"serviceId":"","templateId":"","publicKey":"","toEmails":""}');
             state.userRoles = JSON.parse(localStorage.getItem('p_roles') || '{"DI LAURO":"SUPERUSER","BASILICA":"USER","CARANGIO":"USER","DATTEO":"USER"}');
+            state.notifications = JSON.parse(localStorage.getItem('p_notifications') || '[]');
 
             populateLoginUsers();
-
-            // renderCalendar() verrà richiamato dopo il login
             renderCalendar();
 
             // Poi tenta Cloud
             try {
-                const { data: pData } = await _supabase.from('profiles').select('*').single();
-                if(pData && pData.data) { STAFF = pData.data; populateLoginUsers(); }
-                const { data: sData } = await _supabase.from('shifts').select('*').single();
-                if(sData && sData.data) state.shifts = sData.data;
-                const { data: rData } = await _supabase.from('requests').select('*').single();
-                if(rData && rData.data) {
-                    if(Array.isArray(rData.data)) state.history = rData.data; // backward compatibility
-                    else {
-                        state.history = rData.data.history || [];
-                        state.pendingRequests = rData.data.pending || [];
-                        state.emailConfig = rData.data.emailConfig || state.emailConfig;
-                        state.userRoles = rData.data.userRoles || state.userRoles;
-                    }
-                }
+                await fetchProfiles();
+                await fetchShifts();
+                await fetchRequests();
+                populateLoginUsers();
+                renderCalendar();
             } catch(e) { console.warn("Cloud load skip", e); }
         }
         init();
+
+        // --- GESTIONE NOTIFICHE UTENTE ---
+        let notificationQueue = [];
+
+        async function checkUserNotifications() {
+            if (!currentUser || currentUser === 'ADMIN') return;
+            
+            await fetchRequests();
+
+            if (!state.notifications || state.notifications.length === 0) return;
+
+            const myUnseen = state.notifications.filter(n => n.user === currentUser && !n.seenByUser);
+            if (myUnseen.length === 0) return;
+
+            notificationQueue = [...myUnseen];
+            showNextNotification();
+        }
+
+        function showNextNotification() {
+            if (notificationQueue.length === 0) {
+                persistData();
+                return;
+            }
+            const n = notificationQueue.shift();
+            
+            const overlay = document.getElementById('notificationOverlay');
+            const titleEl = document.getElementById('notificationTitle');
+            const msgEl = document.getElementById('notificationMessage');
+            
+            const isApprove = n.status === "APPROVATA";
+            titleEl.innerHTML = isApprove ? "✅ Richiesta Approvata" : "❌ Richiesta Rifiutata";
+            titleEl.style.color = isApprove ? "var(--success)" : "var(--ambra)";
+            
+            let html = `La tua richiesta di cambio turno per il giorno <strong>${n.date}</strong> (da <code>${n.from}</code> a <code>${n.to}</code>) è stata <strong>${n.status}</strong> dall'Amministratore.`;
+            if (n.reason) {
+                html += `<br><br><div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 3px solid ${isApprove ? 'var(--success)' : 'var(--ambra)'};"><strong>Motivazione:</strong><br><em>${n.reason}</em></div>`;
+            }
+            msgEl.innerHTML = html;
+            
+            const stateNotif = state.notifications.find(notif => notif.id === n.id);
+            if (stateNotif) stateNotif.seenByUser = true;
+            
+            overlay.style.display = 'flex';
+        }
+
+        function closeNotification() {
+            document.getElementById('notificationOverlay').style.display = 'none';
+            showNextNotification();
+        }
+
+        // --- ESPORTAZIONE REPORT PERIODICO ---
+        function toggleCustomReportDates() {
+            const rangeType = document.getElementById('reportRangeType').value;
+            const customDatesDiv = document.getElementById('customReportDates');
+            customDatesDiv.style.display = rangeType === 'custom' ? 'flex' : 'none';
+        }
+
+        async function sendRangeReport() {
+            if(!state.emailConfig.serviceId || !state.emailConfig.templateId || !state.emailConfig.publicKey || !state.emailConfig.toEmails) {
+                return alert("Configurazione EmailJS incompleta nel pannello Admin!");
+            }
+            
+            const rangeType = document.getElementById('reportRangeType').value;
+            let dates = [];
+            let rangeName = "";
+            
+            if (rangeType === 'week') {
+                const today = new Date();
+                const day = today.getDay();
+                const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+                const monday = new Date(today.setDate(diff));
+                rangeName = "Settimanale (Lun-Dom corrente)";
+                for (let i = 0; i < 7; i++) {
+                    const d = new Date(monday);
+                    d.setDate(monday.getDate() + i);
+                    const dStr = `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getDate().toString().padStart(2,'0')}`;
+                    dates.push(dStr);
+                }
+            } else if (rangeType === 'month') {
+                rangeName = `Mensile (${MONTHS[state.month]} ${state.year})`;
+                const daysInMonth = new Date(state.year, state.month + 1, 0).getDate();
+                for (let i = 1; i <= daysInMonth; i++) {
+                    const dStr = `${state.year}-${(state.month+1).toString().padStart(2,'0')}-${i.toString().padStart(2,'0')}`;
+                    dates.push(dStr);
+                }
+            } else if (rangeType === 'quarter') {
+                const qStartMonth = Math.floor(state.month / 3) * 3;
+                const qNum = Math.floor(state.month / 3) + 1;
+                rangeName = `Trimestrale (Q${qNum} ${state.year})`;
+                for (let m = qStartMonth; m < qStartMonth + 3; m++) {
+                    const daysInM = new Date(state.year, m + 1, 0).getDate();
+                    for (let i = 1; i <= daysInM; i++) {
+                        const dStr = `${state.year}-${(m+1).toString().padStart(2,'0')}-${i.toString().padStart(2,'0')}`;
+                        dates.push(dStr);
+                    }
+                }
+            } else if (rangeType === 'custom') {
+                const startVal = document.getElementById('startReportDate').value;
+                const endVal = document.getElementById('endReportDate').value;
+                if (!startVal || !endVal) return alert("Seleziona sia la data di inizio che quella di fine.");
+                const start = new Date(startVal);
+                const end = new Date(endVal);
+                if (start > end) return alert("La data di inizio deve essere precedente alla data di fine.");
+                
+                rangeName = `Periodo Libero (${startVal} al ${endVal})`;
+                let curr = new Date(start);
+                while (curr <= end) {
+                    const dStr = `${curr.getFullYear()}-${(curr.getMonth()+1).toString().padStart(2,'0')}-${curr.getDate().toString().padStart(2,'0')}`;
+                    dates.push(dStr);
+                    curr.setDate(curr.getDate() + 1);
+                }
+            }
+            
+            if (dates.length === 0) return alert("Nessuna data trovata nell'intervallo selezionato.");
+            
+            emailjs.init(state.emailConfig.publicKey);
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+            doc.text("Pianificazione PAYLOAD - Report Turni", 20, 20);
+            doc.setFontSize(11);
+            doc.text(`Tipo Report: ${rangeName}`, 20, 28);
+            doc.text(`Data Generazione: ${new Date().toLocaleString()}`, 20, 34);
+            
+            let y = 45;
+            doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+            doc.text("DATA", 20, y);
+            let xOffset = 60;
+            STAFF.forEach(name => {
+                doc.text(name, xOffset, y);
+                xOffset += 30;
+            });
+            
+            y += 5;
+            doc.line(20, y - 2, xOffset - 10, y - 2);
+            
+            doc.setFont("helvetica", "normal");
+            dates.forEach(dStr => {
+                if (y > 275) {
+                    doc.addPage();
+                    y = 20;
+                    doc.setFont("helvetica", "bold");
+                    doc.text("DATA", 20, y);
+                    let xOff = 60;
+                    STAFF.forEach(name => {
+                        doc.text(name, xOff, y);
+                        xOff += 30;
+                    });
+                    y += 5;
+                    doc.line(20, y - 2, xOff - 10, y - 2);
+                    doc.setFont("helvetica", "normal");
+                }
+                
+                doc.text(dStr, 20, y);
+                
+                let xOff = 60;
+                STAFF.forEach(name => {
+                    const val = (state.shifts[dStr] && state.shifts[dStr][name]) || "—";
+                    doc.text(val, xOff, y);
+                    xOff += 30;
+                });
+                y += 6;
+            });
+            
+            const pdfBase64 = doc.output('datauristring');
+            
+            const params = {
+                to_emails: state.emailConfig.toEmails,
+                user_name: "Amministratore",
+                shift_date: rangeName,
+                modification: "Invio report periodico turni",
+                content: pdfBase64,
+                message: `Si allega il report dei turni di servizio per il periodo: ${rangeName}.`
+            };
+            
+            document.getElementById('sendReportBtn').innerText = "Invio in corso...";
+            document.getElementById('sendReportBtn').disabled = true;
+            
+            emailjs.send(state.emailConfig.serviceId, state.emailConfig.templateId, params)
+                .then(() => {
+                    alert("Report inviato via email con successo!");
+                    document.getElementById('sendReportBtn').innerText = "Invia Report via Email";
+                    document.getElementById('sendReportBtn').disabled = false;
+                })
+                .catch(err => {
+                    console.error("Errore invio report:", err);
+                    alert("Errore durante l'invio del report via email. Controlla le configurazioni EmailJS.");
+                    document.getElementById('sendReportBtn').innerText = "Invia Report via Email";
+                    document.getElementById('sendReportBtn').disabled = false;
+                });
+        }
     </script>
 </body>
 </html>
