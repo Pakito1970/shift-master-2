@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang='it'>
 <head>
     <meta charset='utf-8'>
@@ -82,6 +82,9 @@
         .email-config-group input { width: 100%; padding: 10px; border-radius: 8px; background: #0f172a; border: 1px solid var(--border); color: white; box-sizing: border-box; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @media (max-width: 768px) { .header-controls { flex-direction: column; gap: 15px; text-align: center; } #adminOverlay { padding: 20px; } }
+        .current-user-row { background: rgba(56, 189, 248, 0.05) !important; box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.05); }
+        .current-user-row td:not(.staff-name) { background: rgba(56, 189, 248, 0.05) !important; border-top: 1px solid rgba(56, 189, 248, 0.15) !important; border-bottom: 1px solid rgba(56, 189, 248, 0.15) !important; }
+        .current-user-row .staff-name { background: rgba(30, 41, 59, 0.85) !important; border-left: 4px solid var(--p) !important; padding-left: 6px !important; }
     </style>
 </head>
 <body>
@@ -334,7 +337,8 @@
 
             let bodyHtml = "";
             STAFF.forEach(name => {
-                bodyHtml += `<tr><td class='staff-name'>${name}</td>`;
+                const isMyRow = currentUser && currentUser === name;
+                bodyHtml += `<tr class="${isMyRow ? 'current-user-row' : ''}"><td class='staff-name' style="${isMyRow ? 'color: var(--p); font-weight: 800;' : ''}">${name}</td>`;
                 for (let d = 1; d <= daysInMonth; d++) {
                     const ds = `${state.year}-${(state.month+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
                     const val = (state.shifts[ds] && state.shifts[ds][name]) || "—";
@@ -416,11 +420,26 @@
                 if (isFestive(d)) fest++; else fer++;
                 if (fer > 6 || fest > 2) { alert(`Limite superato per ${u}`); renderCalendar(); return; }
             }
-            if(isAdmin) {
+                        if(isAdmin) {
                 await fetchShifts();
                 if(!state.shifts[d]) state.shifts[d] = {};
-                state.history.push({ user: u, date: d, from: currentVal || '—', to: v, timestamp: new Date().toLocaleString(), by: 'Admin' });
+                state.history.push({ user: u, date: d, from: currentVal || '\u2014', to: v, timestamp: new Date().toLocaleString(), by: 'Admin' });
                 state.shifts[d][u] = v; 
+                
+                // Genera una notifica pop-up per l'utente interessato
+                if (!state.notifications) state.notifications = [];
+                state.notifications.push({
+                    id: Date.now().toString() + Math.random().toString().slice(2,6),
+                    user: u,
+                    date: d,
+                    from: currentVal || '\u2014',
+                    to: v,
+                    status: "MODIFICATO DALL'AMMINISTRATORE",
+                    reason: "Modifica diretta effettuata dall'Amministratore.",
+                    timestamp: new Date().toLocaleString(),
+                    seenByUser: false
+                });
+                
                 await persistData();
             } else {
                 await fetchRequests();
@@ -760,7 +779,7 @@
             showNextNotification();
         }
 
-        function showNextNotification() {
+                function showNextNotification() {
             if (notificationQueue.length === 0) {
                 persistData();
                 return;
@@ -771,14 +790,31 @@
             const titleEl = document.getElementById('notificationTitle');
             const msgEl = document.getElementById('notificationMessage');
             
-            const isApprove = n.status === "APPROVATA";
-            titleEl.innerHTML = isApprove ? "✅ Richiesta Approvata" : "❌ Richiesta Rifiutata";
-            titleEl.style.color = isApprove ? "var(--success)" : "var(--ambra)";
+            const status = n.status;
+            let title = "\uD83D\uDCE2 Notifica Turni";
+            let color = "var(--p)";
+            let html = "";
             
-            let html = `La tua richiesta di cambio turno per il giorno <strong>${n.date}</strong> (da <code>${n.from}</code> a <code>${n.to}</code>) è stata <strong>${n.status}</strong> dall'Amministratore.`;
-            if (n.reason) {
-                html += `<br><br><div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 3px solid ${isApprove ? 'var(--success)' : 'var(--ambra)'};"><strong>Motivazione:</strong><br><em>${n.reason}</em></div>`;
+            if (status === "APPROVATA") {
+                title = "\u2705 Richiesta Approvata";
+                color = "var(--success)";
+                html = `La tua richiesta di cambio turno per il giorno <strong>${n.date}</strong> (da <code>${n.from}</code> a <code>${n.to}</code>) \u00E8 stata <strong>Approvata</strong> dall'Amministratore.`;
+            } else if (status === "RIFIUTATA") {
+                title = "\u274C Richiesta Rifiutata";
+                color = "var(--ambra)";
+                html = `La tua richiesta di cambio turno per il giorno <strong>${n.date}</strong> (da <code>${n.from}</code> a <code>${n.to}</code>) \u00E8 stata <strong>Rifiutata</strong> dall'Amministratore.`;
+            } else {
+                title = "\u270F\uFE0F Turno Modificato";
+                color = "var(--p)";
+                html = `Il tuo turno per il giorno <strong>${n.date}</strong> \u00E8 stato modificato dall'Amministratore da <code>${n.from}</code> a <code>${n.to}</code>.`;
             }
+            
+            if (n.reason) {
+                html += `<br><br><div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 3px solid ${color};"><strong>Nota/Motivazione:</strong><br><em>${n.reason}</em></div>`;
+            }
+            
+            titleEl.innerHTML = title;
+            titleEl.style.color = color;
             msgEl.innerHTML = html;
             
             const stateNotif = state.notifications.find(notif => notif.id === n.id);
