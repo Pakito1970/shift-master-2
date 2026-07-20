@@ -224,12 +224,28 @@
                 if (error) console.warn("Errore recupero profili:", error);
                 else if (data && data.data) {
                     STAFF = data.data;
+                    sortStaff();
                     populateLoginUsers();
                 }
             } catch (e) { console.error("Errore imprevisto recupero profili:", e); }
         }
 
         let STAFF = ["DI LAURO", "BASILICA", "CARANGIO", "DATTEO"];
+
+        function sortStaff() {
+            const ORDER_MAP = {
+                "DI LAURO": 1,
+                "BASILICA": 2,
+                "CARANGIO": 3,
+                "DATTEO": 4
+            };
+            STAFF.sort((a, b) => {
+                const orderA = ORDER_MAP[a] || 999;
+                const orderB = ORDER_MAP[b] || 999;
+                if (orderA !== orderB) return orderA - orderB;
+                return a.localeCompare(b);
+            });
+        }
         const OPTIONS = ["CFI", "CFI/REP", "REP", "MIX", "RM", "L.O.", "LIC", "—"];
         const MONTHS = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
         let state = { 
@@ -509,24 +525,40 @@
                     });
                     state.userRoles = newRoles;
 
-                    // Carica i turni
+                    // Carica i turni mappando dinamicamente la riga per ciascun operatore nel blocco mensile
                     for(let m=0; m<12; m++) {
                         const rowOff = 4 + (m * 8);
-                        for(let s=0; s<importedStaff.length; s++) {
-                            const staffName = importedStaff[s];
+                        
+                        // Mappa ogni nome alla sua riga effettiva per questo mese
+                        const nameToRowMap = {};
+                        for(let s=0; s<10; s++) {
                             const row = rowOff + 3 + s;
-                            for(let d=1; d<=31; d++) {
-                                const cell = ws[XLSX.utils.encode_col(d) + row];
-                                if(cell && cell.v) {
-                                    const ds = `2026-${(m+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
-                                    const v = cell.v.toString().toUpperCase().trim();
-                                    if(!state.shifts[ds]) state.shifts[ds] = {};
-                                    if(!state.originalShifts[ds]) state.originalShifts[ds] = {};
-                                    state.shifts[ds][staffName] = v; 
-                                    state.originalShifts[ds][staffName] = v;
+                            const nameCell = ws['A' + row];
+                            if(nameCell && nameCell.v) {
+                                const nameVal = nameCell.v.toString().toUpperCase().trim();
+                                if(nameVal && nameVal !== "GIORNO" && nameVal !== "SETT.") {
+                                    nameToRowMap[nameVal] = row;
                                 }
                             }
                         }
+
+                        // Legge i turni del mese basandosi sulla riga corretta di ciascun operatore
+                        importedStaff.forEach(staffName => {
+                            const row = nameToRowMap[staffName];
+                            if(row) {
+                                for(let d=1; d<=31; d++) {
+                                    const cell = ws[XLSX.utils.encode_col(d) + row];
+                                    if(cell && cell.v) {
+                                        const ds = `2026-${(m+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
+                                        const v = cell.v.toString().toUpperCase().trim();
+                                        if(!state.shifts[ds]) state.shifts[ds] = {};
+                                        if(!state.originalShifts[ds]) state.originalShifts[ds] = {};
+                                        state.shifts[ds][staffName] = v; 
+                                        state.originalShifts[ds][staffName] = v;
+                                    }
+                                }
+                            }
+                        });
                     }
                     alert("Importazione completata con successo! Sincronizzazione in corso...");
                     await persistData();
@@ -676,6 +708,7 @@
                 const name = n.toUpperCase().trim();
                 if(!STAFF.includes(name)) {
                     STAFF.push(name); 
+                    sortStaff();
                     state.userRoles[name] = (name === "DI LAURO") ? "SUPERUSER" : "USER";
                     persistData();
                     renderAdminUsers(); 
@@ -740,7 +773,11 @@
             mSelect.value = state.month; ySelect.value = state.year;
 
             // Carica da LocalStorage subito
-            const sStaff = localStorage.getItem('p_staff'); if(sStaff) STAFF = JSON.parse(sStaff);
+            const sStaff = localStorage.getItem('p_staff'); 
+            if(sStaff) {
+                STAFF = JSON.parse(sStaff);
+                sortStaff();
+            }
             state.shifts = JSON.parse(localStorage.getItem('p_shifts') || '{}');
             state.history = JSON.parse(localStorage.getItem('p_history') || '[]');
             state.pendingRequests = JSON.parse(localStorage.getItem('p_pending') || '[]');
